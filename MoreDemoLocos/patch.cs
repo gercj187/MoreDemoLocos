@@ -1,16 +1,25 @@
 using HarmonyLib;
+using DV.LocoRestoration;
+using DV.ThingTypes;
+using DV.ThingTypes.TransitionHelpers;
+using DV.JObjectExtstensions;
+using Newtonsoft.Json.Linq;
+using UnityEngine;
 
-[HarmonyPatch(typeof(StartGameData_NewCareer), "Initialize")]
-public static class Patch_StartGameData_NewCareer_Initialize
+namespace MoreDemoLocos
 {
-    private static bool alreadyStarted = false;
-
-    static void Postfix()
+    [HarmonyPatch(typeof(StartGameData_NewCareer), "Initialize")]
+    public static class Patch_StartGameData_NewCareer_Initialize
     {
-        if (alreadyStarted) return;
-        alreadyStarted = true;
+        private static bool alreadyStarted = false;
 
-        //MoreDemoLocos.Main.logger.Log("[MoreDemoLocos] Neue Karriere erkannt (via Initialize) – Manager wird gestartet.");
-        MoreDemoLocos.Main.StartManager();
+        static void Postfix()
+        {
+            if (alreadyStarted) return;
+            alreadyStarted = true;
+
+            Main.logger.Log(" New Career started! Load UMM-Settings...");
+            Main.StartManager();
+        }
     }
 }

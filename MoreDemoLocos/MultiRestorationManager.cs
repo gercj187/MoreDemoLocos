@@ -8,7 +8,6 @@ namespace MoreDemoLocos
 {
     public class MultiRestorationManager : MonoBehaviour
     {
-        [Tooltip("Welche Loktypen sollen vervielfacht werden")]
         public List<LocoRestorationController> originalControllers;
 
         private void Start()
@@ -19,7 +18,6 @@ namespace MoreDemoLocos
 
             if (!originalControllers.Any())
             {
-                //Main.logger.Log("[MoreDemoLocos] Keine RestorationController gefunden (wahrscheinlich noch nicht geladen). Versuche es in 2 Sekunden erneut...");
                 Invoke(nameof(Retry), 2f);
                 return;
             }
@@ -35,60 +33,63 @@ namespace MoreDemoLocos
 
             if (!originalControllers.Any())
             {
-                //Main.logger.Log("[MoreDemoLocos] Auch beim zweiten Versuch keine Controller gefunden.");
+                Main.logger.Log(" Cant clone Restoration locos!");
                 return;
             }
 
             SpawnClones();
         }
 
-        private void SpawnClones()
-        {
-            foreach (var original in originalControllers)
-            {
-                int count = Main.settings.locoCountPerType;
-                Main.logger.Log($"[MoreDemoLocos] Erzeuge {count}x '{original.locoLivery.id}'");
+		private void SpawnClones()
+		{
+			int countPerType = Main.settings.locoCountPerType;
+			var allPoints = FindObjectsOfType<LocoRestorationSpawnPoint>().ToList();
+			allPoints.Shuffle();
 
-                for (int i = 1; i < count; i++) // i=1, weil Original schon existiert
-                {
-                    CreateRestorationClone(original, i);
-                }
-            }
-        }
+			var usedPoints = new HashSet<LocoRestorationSpawnPoint>();
 
-        private void CreateRestorationClone(LocoRestorationController baseController, int index)
-        {
-            var spawnPoints = baseController.spawnPoints.ToList();
-            spawnPoints.Shuffle(); // eigene Erweiterung unten
+			foreach (var original in originalControllers)
+			{
+				string liveryId = original.locoLivery.id;
 
-            var chosenPoint = spawnPoints.FirstOrDefault(p => !p.pointUsed);
-            if (chosenPoint == null)
-            {
-                //Main.logger.Log($"[MoreDemoLocos] Kein freier Spawnpunkt für '{baseController.locoLivery.id}' (Instanz {index}) gefunden.");
-                return;
-            }
+				var matchingPoints = allPoints
+					.Where(p => original.spawnPoints.Contains(p) && !usedPoints.Contains(p))
+					.ToList();
 
-            var cloneGO = Instantiate(baseController.gameObject, baseController.transform.parent);
-            var controller = cloneGO.GetComponent<LocoRestorationController>();
-            chosenPoint.pointUsed = true;
+				int spawnCount = Mathf.Min(countPerType - 1, matchingPoints.Count);
+                Main.logger.Log($" Spawn {spawnCount} additional restoration locos '{liveryId}'");
 
-            string uniqueId = baseController.SaveID + "_Clone" + index;
-            //Main.logger.Log($"[MoreDemoLocos] Clone '{uniqueId}' platziert bei {chosenPoint.name}");
-        }
-    }
+				for (int i = 0; i < spawnCount; i++)
+				{
+					var point = matchingPoints[i];
+					CreateRestorationClone(original, i + 1, point);
+					usedPoints.Add(point);
+				}
+			}
+		}
 
-    public static class ListExtensions
-    {
-        private static readonly System.Random rng = new System.Random();
+		private void CreateRestorationClone(LocoRestorationController baseController, int index, LocoRestorationSpawnPoint point)
+		{
+			var cloneGO = Instantiate(baseController.gameObject, baseController.transform.parent);
+			var controller = cloneGO.GetComponent<LocoRestorationController>();
+			controller.spawnPoints = new[] { point };
+			Main.logger.Log($" Clone {index} for '{baseController.locoLivery.id}' at '{point.name}'.");
+		}
+	}
 
-        public static void Shuffle<T>(this IList<T> list)
-        {
-            int n = list.Count;
-            while (n > 1)
-            {
-                int k = rng.Next(n--);
-                (list[n], list[k]) = (list[k], list[n]);
-            }
-        }
-    }
+	public static class ListExtensions
+	{
+		private static readonly System.Random rng = new System.Random();
+		
+		public static void Shuffle<T>(this IList<T> list)
+		{
+			int n = list.Count;
+			while (n > 1)
+			{
+				int k = rng.Next(n--);
+				(list[n], list[k]) = (list[k], list[n]);
+			}
+		}
+	}
 }
+

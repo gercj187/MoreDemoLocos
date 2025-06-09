@@ -21,6 +21,9 @@
 		<Reference Include="DV.BrakeSystem">
 			<HintPath>S:\SteamLibrary\steamapps\common\Derail Valley\DerailValley_Data\Managed\DV.BrakeSystem.dll</HintPath>
 		</Reference>
+		<Reference Include="Newtonsoft.Json">
+			<HintPath>S:\SteamLibrary\steamapps\common\Derail Valley\DerailValley_Data\Managed\Newtonsoft.Json.dll</HintPath>
+		</Reference>
 	</ItemGroup>
 
 	<!-- Unity -->

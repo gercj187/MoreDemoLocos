@@ -1,6 +1,8 @@
 using UnityModManagerNet;
 using UnityEngine;
 using HarmonyLib;
+using System.Collections.Generic;
+using DV.LocoRestoration;
 
 namespace MoreDemoLocos
 {
@@ -20,7 +22,7 @@ namespace MoreDemoLocos
             var harmony = new Harmony("com.cj187.moredemolocos");
             harmony.PatchAll();
 
-            logger.Log("[MoreDemoLocos] Mod geladen und Harmony-Patches angewendet.");
+            logger.Log(" Mod loaded successfully.");
 
             return true;
         }
@@ -38,11 +40,27 @@ namespace MoreDemoLocos
 
         public static void StartManager()
         {
-            logger.Log($"[MoreDemoLocos] Start with {settings.locoCountPerType} Locos each Type.");
+            logger.Log($" Start with {settings.locoCountPerType} Locos each Type.");
 
             GameObject obj = new GameObject("CJ_MultiRestorationManager");
             Object.DontDestroyOnLoad(obj);
             obj.AddComponent<MultiRestorationManager>();
         }
+		
+		public static HashSet<string> vanillaRestorationGuids = new HashSet<string>();
+		public static void CacheVanillaRestorationLocos()
+		{
+			vanillaRestorationGuids.Clear();
+
+			foreach (var ctrl in Object.FindObjectsOfType<LocoRestorationController>())
+			{
+				var loco = Traverse.Create(ctrl).Field("loco").GetValue<TrainCar>();
+				if (loco != null)
+				{
+					vanillaRestorationGuids.Add(loco.CarGUID);
+					logger.Log($" Vanilla GUID found: {loco.CarGUID}");
+				}
+			}
+		}
     }
 }
