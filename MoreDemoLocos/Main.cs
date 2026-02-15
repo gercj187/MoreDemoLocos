@@ -1,66 +1,70 @@
 using UnityModManagerNet;
 using UnityEngine;
 using HarmonyLib;
-using System.Collections.Generic;
-using DV.LocoRestoration;
+using Newtonsoft.Json.Linq;
 
 namespace MoreDemoLocos
 {
     public static class Main
     {
-        public static Settings settings;
-        public static UnityModManager.ModEntry.ModLogger logger;
+        public static JObject SaveRoot;
+        public static UnityModManager.ModEntry Mod;
+        public static Settings Settings;
+        public static MultiRestorationManager Manager;
+        public static SaveGameData CurrentSaveGame;
 
-        static bool Load(UnityModManager.ModEntry modEntry)
+        public static bool Load(UnityModManager.ModEntry modEntry)
         {
-            logger = modEntry.Logger;
-            settings = Settings.Load<Settings>(modEntry);
+            Mod = modEntry;
+            Settings = UnityModManager.ModSettings.Load<Settings>(modEntry);
 
-            modEntry.OnGUI = OnGUI;
-            modEntry.OnSaveGUI = OnSaveGUI;
+            modEntry.OnGUI = Settings.Draw;
+            modEntry.OnSaveGUI = Settings.Save;
 
-            var harmony = new Harmony("com.cj187.moredemolocos");
+            var harmony = new Harmony(modEntry.Info.Id);
             harmony.PatchAll();
 
-            logger.Log(" Mod loaded successfully.");
+            if (Manager == null)
+            {
+                var go = new GameObject("MoreDemoLocos_Manager");
+                Object.DontDestroyOnLoad(go);
+                Manager = go.AddComponent<MultiRestorationManager>();
+            }
 
+            Log("Loaded.");
             return true;
         }
 
-        static void OnGUI(UnityModManager.ModEntry modEntry)
+        public static void RequestSpawn(string liveryId, int maxCount)
         {
-            GUILayout.Label($"Amount of restoration locos each type: {settings.locoCountPerType}");
-            settings.locoCountPerType = (int)GUILayout.HorizontalSlider(settings.locoCountPerType, 1, 10);
+            if (!Settings.EnableDebug)
+                return;
+
+            if (Manager == null)
+            {
+                LogDebug("Spawn request ignored: Manager not initialized.");
+                return;
+            }
+
+            LogDebug($"Manual spawn request: {liveryId}");
+            Manager.SpawnForType(liveryId, maxCount);
         }
 
-        static void OnSaveGUI(UnityModManager.ModEntry modEntry)
-        {
-            settings.Save(modEntry);
-        }
+        // ============================================
+        // LOGGING
+        // ============================================
 
-        public static void StartManager()
-        {
-            logger.Log($" Start with {settings.locoCountPerType} Locos each Type.");
-
-            GameObject obj = new GameObject("CJ_MultiRestorationManager");
-            Object.DontDestroyOnLoad(obj);
-            obj.AddComponent<MultiRestorationManager>();
-        }
-		
-		public static HashSet<string> vanillaRestorationGuids = new HashSet<string>();
-		public static void CacheVanillaRestorationLocos()
+        public static void Log(string msg)
 		{
-			vanillaRestorationGuids.Clear();
+			Mod.Logger.Log(msg);
+		}
 
-			foreach (var ctrl in Object.FindObjectsOfType<LocoRestorationController>())
-			{
-				var loco = Traverse.Create(ctrl).Field("loco").GetValue<TrainCar>();
-				if (loco != null)
-				{
-					vanillaRestorationGuids.Add(loco.CarGUID);
-					logger.Log($" Vanilla GUID found: {loco.CarGUID}");
-				}
-			}
+		public static void LogDebug(string msg)
+		{
+			if (!Settings.EnableDebug)
+				return;
+
+			Mod.Logger.Log(msg);
 		}
     }
 }
