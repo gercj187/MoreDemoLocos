@@ -34,7 +34,7 @@ namespace MoreDemoLocos
             PaintJobDone
         }
 
-        public RespawnTriggerState respawnTrigger = RespawnTriggerState.LocoServiced;
+        public RespawnTriggerState respawnTrigger = RespawnTriggerState.PaintJobDone;
 
         public static LocoRestorationController.RestorationState
             ToRestorationState(RespawnTriggerState trigger)
