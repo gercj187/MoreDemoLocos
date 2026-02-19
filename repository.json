@@ -2,7 +2,8 @@
 	"Releases": [
 		{
 			"Id": "MoreDemoLocos",
-			"Version": "1.02.0",
+			"Version": "1.02.1",
+			"DownloadUrl": "https://github.com/gercj187/MoreDemoLocos/releases/download/MoreDemoLocos/MoreDemoLocos_v1.02.1"
 		}
 	]
 }
