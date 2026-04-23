@@ -14,6 +14,7 @@ using DV.ThingTypes;
 using DV.Simulation;
 using DV.Garages;
 using DV.Utils;
+using DV.CashRegister;
 using DV.PointSet;
 using DV.CabControls;
 using DV.Shops;
@@ -71,47 +72,7 @@ namespace MoreDemoLocos
     }
 	
 	internal static class RestorationRuntimeRefresher
-	{
-		internal static void ForceFireRestorationStateChanged(LocoRestorationController ctrl)
-		{
-			if (ctrl == null)
-				return;
-
-			var handlerField = typeof(LocoRestorationController)
-				.GetField("StateChanged", BindingFlags.Instance | BindingFlags.NonPublic);
-
-			if (handlerField == null)
-			{
-				Main.LogDebug("ERROR: StateChanged field not found");
-				return;
-			}
-
-			var del = handlerField.GetValue(ctrl) as MulticastDelegate;
-			if (del == null)
-			{
-				Main.LogDebug("No StateChanged listeners registered");
-				return;
-			}
-
-			foreach (var d in del.GetInvocationList())
-			{
-				try
-				{
-					d.DynamicInvoke(
-						ctrl,
-						ctrl.locoLivery,
-						ctrl.State
-					);
-				}
-				catch (System.Exception e)
-				{
-					Main.LogDebug($"ERROR invoking StateChanged: {e}");
-				}
-			}
-
-			Main.LogDebug("StateChanged FORCED for museum refresh");
-		}
-		
+	{		
 		internal static void ForcePitStopRefresh(LocoRestorationController ctrl)
 		{
 			if (ctrl == null)
@@ -176,40 +137,6 @@ namespace MoreDemoLocos
 			Main.LogDebug(
 				$"FORCE Savegame reset: {ctrl.SaveID} -> S2, loco={cloneLoco.CarGUID}"
 			);
-		}
-	}
-	
-	internal static class RestorationControllerHardReset
-	{
-		internal static void ForceControllerResetToS2(LocoRestorationController ctrl)
-		{
-			if (ctrl == null)
-				return;
-
-			// 1) currentState hart zurücksetzen
-			Traverse.Create(ctrl)
-				.Field("currentState")
-				.SetValue(LocoRestorationController.RestorationState.S2_LocoUnblocked);
-
-			// 2) completedStates LEEREN (EXTREM WICHTIG)
-			Traverse.Create(ctrl)
-				.Field("completedStates")
-				.SetValue(new HashSet<LocoRestorationController.RestorationState>());
-
-			// 3) cachedCompletedStates ebenfalls leeren
-			Traverse.Create(ctrl)
-				.Field("cachedCompletedStates")
-				.SetValue(new HashSet<LocoRestorationController.RestorationState>());
-
-			// 4) State offiziell anwenden (triggert interne Logik)
-			Traverse.Create(ctrl)
-				.Method(
-					"SetState",
-					LocoRestorationController.RestorationState.S2_LocoUnblocked
-				)
-				.GetValue();
-
-			Main.LogDebug($"HARD controller reset -> S2 ({ctrl.locoLivery?.id})");
 		}
 	}
 
@@ -639,10 +566,22 @@ namespace MoreDemoLocos
             {
                 var key = (controller, state);
                 if (!triggeredStates.Add(key)) return;
-            }
-
-            TrySpawn(controller);
+            }    
+			
+			CoroutineManager.Instance.Run(DelayedMilestone(controller));
         }
+		
+		private IEnumerator DelayedMilestone(LocoRestorationController controller)
+		{
+			yield return new WaitForSeconds(5f);
+
+			if (controller == null)
+				yield break;
+
+			Main.LogDebug($"Delayed milestone spawn for {controller.locoLivery?.id}");
+
+			TrySpawn(controller);
+		}
 
         private void TrySpawn(LocoRestorationController controller)
 		{
@@ -740,7 +679,13 @@ namespace MoreDemoLocos
 			
 			clone.AddComponent<MoreDemoLocoClone>();
 
-			var ctrl = clone.GetComponent<LocoRestorationController>();			
+			var ctrl = clone.GetComponent<LocoRestorationController>();		
+
+			if (ctrl.garageSpawner != null)
+			{
+				ctrl.garageSpawner.enabled = false;
+			}		
+			
 			CoroutineManager.Instance.Run(RegisterCloneWhenReady(ctrl));			
 			ctrl.spawnPoints = baseController.spawnPoints;
 
@@ -762,6 +707,27 @@ namespace MoreDemoLocos
 
 				if (loco != null)
 				{
+					// ============================================
+					// NEW: OPTIMIZER SAFE MODE (FIXED)
+					// ============================================
+					loco.ForceOptimizationState(true, false); // sleep = true
+
+					// NEW: Rigidbody zusätzlich sichern
+					var rb = loco.GetComponent<Rigidbody>();
+					if (rb != null)
+					{
+						rb.velocity = Vector3.zero;
+						rb.angularVelocity = Vector3.zero;
+						rb.Sleep(); // wichtig!
+					}
+
+					// OPTIONAL DEBUG
+					Main.LogDebug($"[SAFE INIT] Clone optimizer blocked: {loco.CarGUID}");
+
+					// ============================================
+					// ORIGINAL CODE
+					// ============================================
+
 					// 1) Clone markieren
 					loco.gameObject.AddComponent<MoreDemoLocoClone>();
 					MoreDemoLocoSaveFlags.MarkClone(loco);
@@ -804,26 +770,7 @@ namespace MoreDemoLocos
 
 					Main.LogDebug($"Registered clone: {loco.CarGUID}");
 
-					// ===================================================
-					// 1) RUNTIME-STATE HART ZURÜCKSETZEN (ZUERST!!!)
-					// ===================================================
-					RestorationControllerHardReset.ForceControllerResetToS2(ctrl);
-
-					// ===================================================
-					// 2) SAVEGAME (für nächsten Load)
-					// ===================================================
-					RestorationSavegameInjector.ForceResetToState2(ctrl, loco);
-
-					// ===================================================
-					// 3) EVENTS FEUERN (JETZT IST STATE STABIL)
-					// ===================================================
-					RestorationRuntimeRefresher.ForceFireRestorationStateChanged(ctrl);
-					RestorationRuntimeRefresher.ForcePitStopRefresh(ctrl);
-
-					// ===================================================
-					// 4) UI neu binden (optional, aber stabil)
-					// ===================================================
-					CoroutineManager.Instance.Run(PostLoadEquivalentRefresh(ctrl));
+					CoroutineManager.Instance.Run(ApplyStateDelayed(ctrl, loco));
 
 					Main.LogDebug($"Clone {loco.CarGUID} actually spawned at {loco.transform.position}");
 					
@@ -836,29 +783,189 @@ namespace MoreDemoLocos
 			Main.LogDebug("ERROR: Clone loco never initialized");
 		}
 		
-		private static void ReRegisterOriginalAfterClone(TrainCarLivery livery)
+		private static IEnumerator ApplyStateDelayed(LocoRestorationController ctrl, TrainCar loco)
 		{
-			if (!GarageCarSpawner.Spawners.TryGetValue(livery, out var spawner))
+			// ============================================
+			// WAIT UNTIL CONTROLLER EXISTS
+			// ============================================
+			while (ctrl == null)
+				yield return null;
+
+			var loadingDoneField = typeof(LocoRestorationController)
+				.GetField("loadingDone", BindingFlags.Instance | BindingFlags.NonPublic);
+
+			// ============================================
+			// WAIT UNTIL DV FINISHED INIT
+			// ============================================
+			while (!(bool)loadingDoneField.GetValue(ctrl))
+				yield return null;
+
+			yield return null;
+
+			Main.LogDebug("Controller fully initialized – applying reset NOW");
+
+			// ============================================
+			// NEW: Erst wieder "aktivieren" wenn fertig
+			// ============================================
+			loco.ForceOptimizationState(false, false); // wake up
+
+			loco.preventRerail = false;
+			loco.preventCouple = false;
+
+			// ============================================
+			// 2) WAIT DV APPLY
+			// ============================================
+			yield return null;
+			yield return null;
+
+			// ============================================
+			// 3) DEBUG TELEPORT (DEIN WUNSCH)
+			// ============================================
+			if (Main.Settings.EnableDebug)
+			{
+				Main.LogDebug("Teleporting clone to player in 5 seconds...");
+
+				yield return new WaitForSeconds(5f);
+
+				var player = PlayerManager.PlayerTransform;
+
+				if (player == null)
+				{
+					Main.LogDebug("ERROR: PlayerTransform not found!");
+				}
+				else
+				{
+					Vector3 targetPos = player.position + player.forward * 10f; // 10m vor Spieler
+
+					loco.transform.position = targetPos;
+					loco.transform.rotation = Quaternion.LookRotation(player.forward);
+
+					var rb = loco.GetComponent<Rigidbody>();
+					if (rb != null)
+					{
+						rb.velocity = Vector3.zero;
+						rb.angularVelocity = Vector3.zero;
+					}
+
+					Main.LogDebug($"Clone teleported to player: {targetPos}");
+				}
+			}
+
+			// ============================================
+			// 4) DEBUG CHECK
+			// ============================================
+			Main.LogDebug(
+				$"IsRerailAllowed = {loco.IsRerailAllowed} | " +
+				$"velocity={loco.GetComponent<Rigidbody>()?.velocity.magnitude}"
+			);
+
+			// ============================================
+			// 5) CONTINUE FLOW
+			// ============================================
+			CoroutineManager.Instance.Run(AfterCloneSetup(ctrl));
+		}
+		
+		private static IEnumerator AfterCloneSetup(LocoRestorationController ctrl)
+		{
+			yield return null;
+			yield return null;
+			yield return null;
+
+			// Views neu verbinden
+			RebindViewsToController(ctrl);
+
+			// ?? WICHTIG: 1 Frame warten
+			yield return null;
+
+			// ?? nochmal warten damit UI sauber zieht
+			yield return null;
+
+			// danach normal dein Refresh
+			CoroutineManager.Instance.Run(PostLoadEquivalentRefresh(ctrl));
+
+			Main.LogDebug("Clone setup DONE (SAFE)");
+		}
+		
+		private static void RebindViewsToController(LocoRestorationController newCtrl)
+		{
+			var method = typeof(LocoRestorationView)
+				.GetMethod(
+					"OnLocoRestorationStateChanged",
+					BindingFlags.Instance | BindingFlags.NonPublic
+				);
+
+			foreach (var view in UObject.FindObjectsOfType<LocoRestorationView>())
+			{
+				if (view == null)
+					continue;
+
+				if (view.controller == null)
+					continue;
+
+				if (view.controller.locoLivery != newCtrl.locoLivery)
+					continue;
+
+				// 1) alten Controller trennen
+				view.OnDisable();
+
+				// 2) neuen Controller setzen
+				view.controller = newCtrl;
+
+				// 3) neu verbinden
+				view.OnEnable();
+
+				// 4) RICHTIGER STATE CALL (FIX!)
+				method?.Invoke(view, new object[]
+				{
+					newCtrl,
+					newCtrl.locoLivery,
+					newCtrl.State
+				});
+
+				Main.LogDebug($"View REBOUND + STATE APPLIED: {newCtrl.locoLivery.id}");
+			}
+		}
+		
+		private static void FixOrderPartsFlow(LocoRestorationController ctrl)
+		{
+			if (ctrl == null)
 				return;
 
-			foreach (var car in UObject.FindObjectsOfType<TrainCar>())
+			if (ctrl.State != LocoRestorationController.RestorationState.S4_OnDestinationTrack)
 			{
-				if (car == null)
-					continue;
-
-				if (car.carLivery != livery)
-					continue;
-
-				var customization = car.GetComponent<TrainCarCustomization>();
-				var modState = customization?.Serialize();
-
-				if (!MoreDemoLocoSaveFlags.IsOriginal(modState))
-					continue;
-
-				Main.LogDebug($"Re-register ORIGINAL after clone: {car.CarGUID}");
-				spawner.OverrideSpawnedCarReference(car);
+				Main.LogDebug("FixOrderPartsFlow skipped: not in S4");
 				return;
 			}
+
+			var module = ctrl.orderPartsModule;
+			if (module == null)
+			{
+				Main.LogDebug("FixOrderPartsFlow ERROR: module null");
+				return;
+			}
+
+			Main.LogDebug("FIX: Rebuilding OrderParts flow");
+
+			// ?? DAS IST DER KEY
+			module.AddThingToCart();
+
+			// Event wieder dran hängen
+			var method = typeof(LocoRestorationController)
+				.GetMethod("OnPartsOrdered", BindingFlags.Instance | BindingFlags.NonPublic);
+
+			if (method != null)
+			{
+				Action action = () => method.Invoke(ctrl, null);
+
+				module.ThingBought -= action;
+				module.ThingBought += action;
+			}
+
+			Traverse.Create(module)
+				.Field("OnUnitsToBuyChanged")
+				.GetValue<Action>()?.Invoke();
+
+			Main.LogDebug("FIX DONE: OrderParts active");
 		}
 
         // =========================================================
@@ -928,8 +1035,7 @@ namespace MoreDemoLocos
 			// 3) GARAGE
 			if (ctrl.garageSpawner != null)
 			{
-				ctrl.garageSpawner.AllowSpawning();
-				ctrl.garageSpawner.ForceCarsRespawn();
+				ctrl.garageSpawner.enabled = false;
 			}
 
 			// 4) HOME GARAGE
@@ -946,26 +1052,86 @@ namespace MoreDemoLocos
 			}
 
 			// 5) CASH REGISTER (REFLECTION)
-			ResetCashRegister(ctrl.orderPartsModule);
-			ResetCashRegister(ctrl.installPartsModule);
+			CoroutineManager.Instance.Run(ForceFullCashRegisterRefresh(ctrl.orderPartsModule));
+			CoroutineManager.Instance.Run(ForceFullCashRegisterRefresh(ctrl.installPartsModule));
 			ForceMuseumProgressReset(ctrl);
 
 			Main.LogDebug("PostLoadEquivalentRefresh DONE");
 		}
 		
-		private static void ResetCashRegister(GenericThingCashRegisterModule module)
+		private static IEnumerator ForceFullCashRegisterRefresh(GenericThingCashRegisterModule module)
 		{
 			if (module == null)
-				return;
+				yield break;
 
-			module.ResetData();
+			var register = module.GetComponentInParent<CashRegisterWithModules>();
+			if (register == null)
+				yield break;
 
-			var init = typeof(CashRegisterModule).GetMethod(
-				"InitializeData",
-				BindingFlags.Instance | BindingFlags.NonPublic
-			);
+			Main.LogDebug("CashRegister HARD REBUILD START");
 
-			init?.Invoke(module, null);
+			// ============================================
+			// 1) ALLE MODULE RESETTEN
+			// ============================================
+			foreach (var m in register.registerModules)
+			{
+				if (m == null)
+					continue;
+			}
+
+			yield return null;
+
+			// ============================================
+			// 2) InitializeData MANUELL ERNEUT AUFRUFEN
+			// ============================================
+			var initMethod = typeof(CashRegisterModule)
+				.GetMethod("InitializeData", BindingFlags.Instance | BindingFlags.NonPublic);
+
+			foreach (var m in register.registerModules)
+			{
+				if (m == null)
+					continue;
+
+				initMethod?.Invoke(m, null);
+
+				// FORCE UI UPDATE
+				Traverse.Create(m)
+					.Field("OnUnitsToBuyChanged")
+					.GetValue<Action>()?.Invoke();
+			}
+
+			yield return null;
+
+			// ============================================
+			// 3) REGISTER UI HARD REFRESH
+			// ============================================
+			register.gameObject.SetActive(false);
+			yield return null;
+			register.gameObject.SetActive(true);
+
+			yield return null;
+			yield return null;
+
+			// ============================================
+			// 4) EXTRA: FORCE BUTTON SYNC
+			// ============================================
+			foreach (var m in register.registerModules)
+			{
+				if (m == null)
+					continue;
+
+				// trick: toggle value ? UI rebuild
+				var current = m.GetTotalUnitsInBasket();
+
+				if (current > 0f)
+				{
+					Traverse.Create(m)
+						.Method("SetUnitsToBuy", current)
+						.GetValue();
+				}
+			}
+
+			Main.LogDebug("CashRegister HARD REBUILD DONE");
 		}
 		
 		private static void ForceMuseumProgressReset(LocoRestorationController ctrl)
@@ -1042,6 +1208,72 @@ namespace MoreDemoLocos
 			}
 
 			Main.LogDebug("CrewVehicle museum filter reapplied after save load.");
+		}
+	}
+	
+	[HarmonyPatch(typeof(LocoRestorationController), "OnTrackChanged")]
+	static class Patch_OnTrackChanged_CloneFix
+	{
+		static void Postfix(LocoRestorationController __instance)
+		{
+			if (__instance == null)
+				return;
+
+			// ?? NUR S4
+			if (__instance.State != LocoRestorationController.RestorationState.S4_OnDestinationTrack)
+				return;
+
+			var loco = Traverse.Create(__instance)
+				.Field("loco")
+				.GetValue<TrainCar>();
+
+			if (loco == null)
+				return;
+
+			// ?? NUR CLONES
+			if (loco.GetComponent<MoreDemoLocoClone>() == null)
+				return;
+
+			var module = __instance.orderPartsModule;
+			if (module == null)
+			{
+				Main.LogDebug("CloneFix ERROR: module null");
+				return;
+			}
+
+			Main.LogDebug("CLONE S4 reached -> FORCE orderParts");
+
+			// =====================================================
+			// ?? KRITISCHER FIX (OHNE DAS SIEHT MAN NICHTS!)
+			// =====================================================
+			module.Data.resourceName = "Loco Parts";  // ? MUSS gesetzt sein!
+			module.Data.pricePerUnit = module.price;  // safety
+
+			// =====================================================
+			// ?? RESET (OHNE CancelShopping!)
+			// =====================================================
+			module.Data.unitsToBuy = 0f;
+
+			// =====================================================
+			// ?? ADD ITEM
+			// =====================================================
+			module.AddThingToCart();
+
+			// =====================================================
+			// ?? FORCE UI UPDATE
+			// =====================================================
+			Traverse.Create(module)
+				.Field("OnUnitsToBuyChanged")
+				.GetValue<Action>()?.Invoke();
+
+			// =====================================================
+			// ?? DEBUG
+			// =====================================================
+			Main.LogDebug(
+				$"DEBUG: units={module.Data.unitsToBuy}, name={module.Data.resourceName}"
+			);
+
+			Main.LogDebug("CLONE orderParts FIX DONE");
 		}
 	}
 }
